@@ -106,7 +106,7 @@
     // ------------------------------
     async function apiFetchPrice(sku) {
       const map = skinMappings[sku];
-      const res = await fetch(`/api/price?appid=${map.appid}&name=${encodeURIComponent(map.market_name)}&currency=1`);
+      const res = await fetch(`https://steam-proxy.onrender.com/api/price?appid=${map.appid}&name=${encodeURIComponent(map.market_name)}&currency=1`);
       if (!res.ok) throw new Error("Proxy error");
       const data = await res.json();
       return { price: data.price || 0, change24h: 0 };
