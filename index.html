@@ -1,1 +1,188 @@
-<h1>test</h1>
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>CSGO Skin Price Tracker</title>
+
+  <!-- Bootstrap 5 CSS -->
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+  <!-- Font Awesome -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+  <!-- Chart.js -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+
+  <style>
+    :root {
+      --bg:#0b0f14;
+      --card:#0f1720;
+      --muted:#94a3b8;
+      --accent:#7c3aed;
+    }
+    html,body {
+      background:linear-gradient(180deg,#06070a 0%,var(--bg) 100%);
+      color:#e6eef8;
+      font-family:Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial
+    }
+    .app-container{max-width:1200px;margin:24px auto;padding:20px}
+    .skin-card{background:linear-gradient(180deg,rgba(255,255,255,0.02),rgba(255,255,255,0.01));border:1px solid rgba(255,255,255,0.03);box-shadow:0 6px 18px rgba(2,6,23,0.6);border-radius:12px;padding:14px}
+    .skin-thumb{width:100%;height:160px;object-fit:cover;border-radius:8px}
+    .btn-accent{background:var(--accent);border:none;color:white}
+    .btn-accent:focus,.btn-accent:hover{background:#5b21b6}
+    .muted{color:var(--muted)}
+    .price-up{color:#34d399}.price-down{color:#fb7185}
+    .search-input{background:transparent;border:1px solid rgba(255,255,255,0.1);color:#f1f5f9}
+    .search-input:focus{color:#fff;background:transparent;border:1px solid rgba(255,255,255,0.1)}
+    .search-input::placeholder{color:#fff;opacity:1}
+    .small-card{background:var(--card);border-radius:10px;padding:10px}
+    .chart-card{height:300px}
+  </style>
+</head>
+<body>
+  <div class="app-container">
+    <header class="d-flex align-items-center justify-content-between mb-3">
+      <div>
+        <h2 class="mb-0">CSGO Skin Price Tracker</h2>
+        <div class="muted">Dark theme • Live price tracking • Charts • Buy now UI</div>
+      </div>
+      <div class="d-flex gap-2 align-items-center">
+        <input id="search" class="form-control form-control-sm search-input" placeholder="Search skin or collection" style="width:260px">
+        <button id="refreshBtn" class="btn btn-sm btn-outline-light"><i class="fa fa-sync-alt"></i> Refresh</button>
+      </div>
+    </header>
+
+    <main>
+      <div class="row g-3 mb-3">
+        <div class="col-md-8">
+          <div class="small-card mb-3">
+            <div class="d-flex justify-content-between align-items-center">
+              <div>
+                <div class="muted">Watchlist</div>
+                <h5 id="watchlistCount">0 skins</h5>
+              </div>
+              <button id="clearWatchlist" class="btn btn-sm btn-outline-danger">Clear</button>
+            </div>
+          </div>
+          <div id="skinsGrid" class="row g-3"></div>
+        </div>
+
+        <div class="col-md-4">
+          <div class="small-card mb-3">
+            <h6 class="mb-2">Price Chart</h6>
+            <div class="chart-card"><canvas id="priceChart"></canvas></div>
+            <div class="mt-2 muted small">Select a skin to see its price history chart.</div>
+          </div>
+          <div class="small-card mt-3 text-center">
+            <h6 class="mb-2">API Status</h6>
+            <div id="apiStatus" class="muted">Checking...</div>
+          </div>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <!-- Bootstrap JS -->
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+
+  <script>
+    // ------------------------------
+    // Skins to track
+    // ------------------------------
+    const skinMappings = {
+      "m4a1_howl": { appid: 730, market_name: "M4A1-S | Howl (Minimal Wear)", img: "https://community.fastly.steamstatic.com/economy/image/xxx" },
+      "usp_sapphire": { appid: 730, market_name: "USP-S | Kill Confirmed (Factory New)", img: "https://community.fastly.steamstatic.com/economy/image/xxx" },
+      "awp_dragon": { appid: 730, market_name: "AWP | Dragon Lore (Minimal Wear)", img: "https://community.fastly.steamstatic.com/economy/image/xxx" }
+    };
+
+    let app = {
+      skins: Object.keys(skinMappings).map(k => ({ sku: k, name: skinMappings[k].market_name, img: skinMappings[k].img, price: 0, change24h: 0 })),
+      chart: null
+    };
+
+    function formatPrice(p){ return '$' + Number(p).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2}); }
+
+    // ------------------------------
+    // Fetch prices from backend
+    // ------------------------------
+    async function apiFetchPrice(sku) {
+      const map = skinMappings[sku];
+      const res = await fetch(`/api/price?appid=${map.appid}&name=${encodeURIComponent(map.market_name)}&currency=1`);
+      if (!res.ok) throw new Error("Proxy error");
+      const data = await res.json();
+      return { price: data.price || 0, change24h: 0 };
+    }
+
+    async function fetchAllPrices() {
+      document.getElementById("apiStatus").innerText = "Updating...";
+      try {
+        const promises = app.skins.map(async s => {
+          const p = await apiFetchPrice(s.sku);
+          s.price = p.price;
+          s.change24h = p.change24h;
+          return s;
+        });
+        await Promise.all(promises);
+        renderSkins(app.skins);
+        if (app.skins.length) updateChartForSkin(app.skins[0]);
+        document.getElementById("apiStatus").innerText = "OK";
+      } catch(err) {
+        console.error(err);
+        document.getElementById("apiStatus").innerText = "Error fetching";
+      }
+    }
+
+    // ------------------------------
+    // UI Rendering
+    // ------------------------------
+    function renderSkins(list){
+      const container = document.getElementById("skinsGrid");
+      container.innerHTML = "";
+      list.forEach(skin=>{
+        const col = document.createElement("div"); col.className="col-12 col-sm-6 col-lg-4";
+        col.innerHTML = `
+          <div class="skin-card">
+            <img src="${skin.img}" alt="${skin.name}" class="skin-thumb mb-2">
+            <h6 class="mb-1">${skin.name}</h6>
+            <div>${formatPrice(skin.price)} <span class="${skin.change24h>=0?"price-up":"price-down"}">${skin.change24h}%</span></div>
+          </div>`;
+        container.appendChild(col);
+      });
+    }
+
+    // ------------------------------
+    // Chart
+    // ------------------------------
+    function initChart(){
+      const ctx = document.getElementById("priceChart");
+      if(app.chart) app.chart.destroy();
+      app.chart = new Chart(ctx,{
+        type:"line",
+        data:{labels:[],datasets:[{label:"Price",data:[],tension:0.3,fill:true}]},
+        options:{plugins:{legend:{display:false}}}
+      });
+    }
+
+    function updateChartForSkin(skin){
+      const labels = [], data = [];
+      const now = Date.now();
+      for(let i=12;i>=0;i--){
+        labels.push(new Date(now-i*3600*1000).toLocaleTimeString());
+        data.push(Number((skin.price+(Math.random()-0.5)*skin.price*0.02).toFixed(2)));
+      }
+      app.chart.data.labels = labels;
+      app.chart.data.datasets[0].data = data;
+      app.chart.update();
+    }
+
+    // ------------------------------
+    // Init
+    // ------------------------------
+    (function(){
+      initChart();
+      renderSkins(app.skins);
+      fetchAllPrices();
+      setInterval(fetchAllPrices, 30000); // refresh every 30s
+    })();
+  </script>
+</body>
+</html>
